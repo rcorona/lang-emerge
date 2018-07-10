@@ -107,7 +107,7 @@ for iterId in range(params['numEpochs'] * numIterPerEpoch):
                                 accuracy['train'], accuracy['test']))
 
     # Save statistics every 1K iterations.
-    if iterId % 1000 != 0: continue;
+    if iterId % 500 != 0: continue;
 
     stats['train'].append(accuracy['train'].item())
     stats['test'].append(accuracy['test'].item())

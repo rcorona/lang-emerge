@@ -34,7 +34,7 @@ def read():
     # Optimization options
     parser.add_argument('-batchSize', default=1000, type=int,\
                             help='Batch size -- number of episodes')
-    parser.add_argument('-numEpochs', default=1000000, type=int,\
+    parser.add_argument('-numEpochs', default=100000, type=int,\
                             help='Maximum number of epochs to run')
     parser.add_argument('-learningRate', default=1e-3, type=float,\
                             help='Initial learning rate')
