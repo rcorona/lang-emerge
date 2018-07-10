@@ -70,7 +70,7 @@ class Dataloader:
         self.rangeInds = torch.range(0, self.numInst['train']-1).long();
         # ship to gpu if needed
         if self.useGPU:
-            for key, value in self.data.iteritems():
+            for key, value in self.data.items():
                 self.data[key] = value.cuda();
             self.rangeInds = self.rangeInds.cuda();
 
@@ -203,7 +203,7 @@ class Dataloader:
             aVocab = ['a-%d' % ii for ii in range(self.aOutVocab)];
             qVocab = ['q-%d' % ii for ii in range(self.qOutVocab)];
 
-        attrPairInv = {ii:value for value, ii in self.attrPairVocab.iteritems()};
+        attrPairInv = {ii:value for value, ii in self.attrPairVocab.items()};
         for ii in range(numImgs):
             # conversation
             conv = {};
