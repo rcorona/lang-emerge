@@ -40,13 +40,16 @@ def read():
                             help='Initial learning rate')
     parser.add_argument('-useGPU', dest='useGPU', action='store_true')
 
+    # Options for saving model.
+    parser.add_argument('-save_prefix', default='models/', type=str)
+    
     try: parsed = vars(parser.parse_args());
-    except IOError, msg: parser.error(str(msg));
-
+    except IOError as msg: parser.error(str(msg));
+     
     # print and return
     maxLen = max([len(ii) for ii in parsed.keys()]);
     fmtString = '\t%' + str(maxLen) + 's : %s';
     print('Arguments:')
-    for keyPair in parsed.iteritems(): print(fmtString % keyPair)
+    for keyPair in parsed.items(): print(fmtString % keyPair)
 
     return parsed;

@@ -26,8 +26,8 @@ class ChatBot(nn.Module):
         # modules (common)
         self.inNet = nn.Embedding(self.inVocabSize, self.embedSize);
         self.outNet = nn.Linear(self.hiddenSize, self.outVocabSize);
-        self.softmax = nn.Softmax();
-
+        self.softmax = nn.Softmax(dim=1);
+        
         # initialize weights
         initializeWeights([self.inNet, self.outNet], 'xavier');
 
@@ -59,6 +59,7 @@ class ChatBot(nn.Module):
     def listen(self, inputToken, imgEmbed = None):
         # embed and pass through LSTM
         tokenEmbeds = self.inNet(inputToken);
+                
         # concat with image representation
         if imgEmbed is not None:
             tokenEmbeds = torch.cat((tokenEmbeds, imgEmbed), 1);
@@ -71,25 +72,35 @@ class ChatBot(nn.Module):
     def speak(self):
         # compute softmax and choose a token
         outDistr = self.softmax(self.outNet(self.hState));
-
+        
         # if evaluating
         if self.evalFlag:
             _, actions = outDistr.max(1);
-            actions = actions.unsqueeze(1);
         else:
-            actions = outDistr.multinomial();
-            # record actions
-            self.actions.append(actions);
-        return actions.squeeze(1);
+            symbol_dist = torch.distributions.Categorical(outDistr);
+            actions = symbol_dist.sample();
+
+            # record action log probabilities for loss computation. 
+            self.actions.append(symbol_dist.log_prob(actions));
+        
+        return actions;
 
     # reinforce each state with reward
     def reinforce(self, rewards):
-        for action in self.actions: action.reinforce(rewards);
+        # Mean negative log loss over batch.
+        # NOTE: Each element of action pertains to a turn.
+        # Every sequence has the same reward for all time steps.
+        # Hence, we use only a single batch of rewards.
 
+        # Multiply each action by reward and take negative (for negative log loss). 
+        self.actions = [torch.squeeze(rewards) * -action for action in self.actions]
+
+        # Take sum for loss.
+        self.loss = torch.mean(torch.cat(self.actions, 0))
+        
     # backward computation
     def performBackward(self):
-        autograd.backward(self.actions, [None for _ in self.actions],\
-                                                retain_variables=True);
+        autograd.backward(self.loss, retain_graph=True);
 
     # switch mode to evaluate
     def evaluate(self): self.evalFlag = True;
@@ -104,7 +115,8 @@ class Answerer(ChatBot):
         params['inVocabSize'] = params['aInVocab'];
         params['outVocabSize'] = params['aOutVocab'];
         self.parent.__init__(params);
-
+        self.bot_name = 'abot'
+        
         # number of attribute values
         numAttrs = sum([len(ii) for ii in self.props.values()]);
         # number of unique attributes
@@ -123,8 +135,10 @@ class Answerer(ChatBot):
     # Embedding the image
     def embedImage(self, batch):
         embeds = self.imgNet(batch);
+        
         # concat instead of add
-        features = torch.cat(embeds.transpose(0, 1), 1);
+        features = torch.cat([embeds[:,i,:] for i in range(embeds.shape[1])], 1)
+        #features = torch.cat(embeds.transpose(0, 1), 1);
         # add features
         #features = torch.sum(embeds, 1).squeeze(1);
 
@@ -138,7 +152,8 @@ class Questioner(ChatBot):
         params['inVocabSize'] = params['qInVocab'];
         params['outVocabSize'] = params['qOutVocab'];
         self.parent.__init__(params);
-
+        self.bot_name = 'qbot'
+        
         # always condition on task
         #self.rnn = nn.LSTMCell(2*self.embedSize, self.hiddenSize);
         self.rnn = nn.LSTMCell(self.embedSize, self.hiddenSize);
@@ -165,9 +180,11 @@ class Questioner(ChatBot):
         # if evaluating
         if self.evalFlag: _, actions = outDistr.max(1);
         else:
-            actions = outDistr.multinomial();
-            # record actions
-            self.actions.append(actions);
+            attr_dist = torch.distributions.Categorical(outDistr)
+            actions = attr_dist.sample();
+
+            # record action log probabilities for computing loss. 
+            self.actions.append(attr_dist.log_prob(actions));
 
         return actions, outDistr;
 
@@ -175,8 +192,8 @@ class Questioner(ChatBot):
     def predict(self, tasks, numTokens):
         guessTokens = [];
         guessDistr = [];
-
-        for _ in xrange(numTokens):
+        
+        for _ in range(numTokens):
             # explicit task dependence
             taskEmbeds = self.inNet(tasks);
             guess, distr = self.guessAttribute(taskEmbeds);
@@ -196,7 +213,7 @@ class Team:
     # initialize
     def __init__(self, params):
         # memorize params
-        for field, value in params.iteritems(): setattr(self, field, value);
+        for field, value in params.items(): setattr(self, field, value);
         self.aBot = Answerer(params);
         self.qBot = Questioner(params);
         self.criterion = nn.NLLLoss();
@@ -230,18 +247,19 @@ class Team:
 
         # get image representation
         imgEmbed = self.aBot.embedImage(batch);
-
+                
         # ask multiple rounds of questions
         aBotReply = tasks + self.qBot.taskOffset;
         # if the conversation is to be recorded
         talk = [];
-        for roundId in xrange(self.numRounds):
+        for roundId in range(self.numRounds):
             # listen to answer, ask q_r, and listen to q_r as well
             self.qBot.listen(aBotReply);
-            qBotQues = self.qBot.speak();
-
+            qBotQues = self.qBot.speak();            
+            
             # clone
             qBotQues = qBotQues.detach();
+
             # make this random
             self.qBot.listen(self.qBot.listenOffset + qBotQues);
 
@@ -257,7 +275,7 @@ class Team:
 
         # listen to the last answer
         self.qBot.listen(aBotReply);
-
+        
         # predict the image attributes, compute reward
         self.guessToken, self.guessDistr = self.qBot.predict(tasks, 2);
 
@@ -269,8 +287,9 @@ class Team:
         self.reward.fill_(self.rlNegReward);
 
         # both attributes need to match
-        firstMatch = self.guessToken[0].data == gtLabels[:, 0:1];
-        secondMatch = self.guessToken[1].data == gtLabels[:, 1:2];
+        firstMatch = self.guessToken[0].data == gtLabels[:, 0];
+        secondMatch = self.guessToken[1].data == gtLabels[:, 1];
+
         self.reward[firstMatch & secondMatch] = self.rlScale;
 
         # reinforce all actions for qBot, aBot
@@ -288,7 +307,7 @@ class Team:
 
         # cummulative reward
         batchReward = torch.mean(self.reward)/self.rlScale;
-        if self.totalReward == None: self.totalReward = batchReward;
+        if type(self.totalReward) == type(None): self.totalReward = batchReward;
         self.totalReward = 0.95 * self.totalReward + 0.05 * batchReward;
 
         return batchReward;
@@ -323,4 +342,4 @@ class Team:
                     toSave[agentName][module] = toSaveModule;
 
         # save as pickle
-        with open(savePath, 'w') as fileId: pickle.dump(toSave, fileId);
+        with open(savePath, 'wb') as fileId: pickle.dump(toSave, fileId);

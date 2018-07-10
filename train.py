@@ -12,6 +12,7 @@ from chatbots import Team
 from dataloader import Dataloader
 import options
 from time import gmtime, strftime
+import pickle
 
 # read the command line options
 options = options.read();
@@ -23,7 +24,7 @@ numInst = data.getInstCount();
 
 params = data.params;
 # append options from options to params
-for key, value in options.iteritems(): params[key] = value;
+for key, value in options.items(): params[key] = value;
 
 #------------------------------------------------------------------------
 # build agents, and setup optmizer
@@ -41,14 +42,17 @@ optimizer = optim.Adam([{'params': team.aBot.parameters(), \
 numIterPerEpoch = int(np.ceil(numInst['train']/params['batchSize']));
 numIterPerEpoch = max(1, numIterPerEpoch);
 count = 0;
-savePath = 'models/tasks_inter_%dH_%.4flr_%r_%d_%d.pickle' %\
-            (params['hiddenSize'], params['learningRate'], params['remember'],\
-            options['aOutVocab'], options['qOutVocab']);
+savePath = '%s_%dH_%.4flr_%r_%d_%d' %\
+            (options['save_prefix'], params['hiddenSize'], params['learningRate'], \
+             params['remember'], options['aOutVocab'], options['qOutVocab']);
+
+# Log stats to keep track of experiment results.
+stats = {'train': [], 'test': []}
 
 matches = {};
 accuracy = {};
 bestAccuracy = 0;
-for iterId in xrange(params['numEpochs'] * numIterPerEpoch):
+for iterId in range(params['numEpochs'] * numIterPerEpoch):
     epoch = float(iterId)/numIterPerEpoch;
 
     # get double attribute tasks
@@ -62,9 +66,10 @@ for iterId in xrange(params['numEpochs'] * numIterPerEpoch):
 
     # forward pass
     team.forward(Variable(batchImg), Variable(batchTask));
+
     # backward pass
     batchReward = team.backward(optimizer, batchLabels, epoch);
-
+    
     # take a step by optimizer
     optimizer.step()
     #--------------------------------------------------------------------------
@@ -76,6 +81,7 @@ for iterId in xrange(params['numEpochs'] * numIterPerEpoch):
         img, task, labels = data.getCompleteData(dtype);
         # evaluate on the train dataset, using greedy policy
         guess, _, _ = team.forward(Variable(img), Variable(task));
+
         # compute accuracy for color, shape, and both
         firstMatch = guess[0].data == labels[:, 0].long();
         secondMatch = guess[1].data == labels[:, 1].long();
@@ -86,18 +92,28 @@ for iterId in xrange(params['numEpochs'] * numIterPerEpoch):
     team.train();
 
     # break if train accuracy reaches 100%
-    if accuracy['train'] == 100: break;
+    #if accuracy['train'] == 100: break;
 
     # save for every 5k epochs
-    if iterId > 0 and iterId % (10000*numIterPerEpoch) == 0:
-        team.saveModel(savePath, optimizer, params);
+    if iterId > 0 and iterId % (5000*numIterPerEpoch) == 0:
+        team.saveModel(savePath + '.model', optimizer, params);
 
+    # Print progress every 100 iterations. 
     if iterId % 100 != 0: continue;
 
     time = strftime("%a, %d %b %Y %X", gmtime());
     print('[%s][Iter: %d][Ep: %.2f][R: %.4f][Tr: %.2f Te: %.2f]' % \
                                 (time, iterId, epoch, team.totalReward,\
                                 accuracy['train'], accuracy['test']))
+
+    # Save statistics every 1K iterations.
+    if iterId % 1000 != 0: continue;
+
+    stats['train'].append(accuracy['train'].item())
+    stats['test'].append(accuracy['test'].item())
+
+    with open(savePath + '.stats', 'wb') as fileId: pickle.dump(stats, fileId)
+    
 #------------------------------------------------------------------------
 # save final model with a time stamp
 timeStamp = strftime("%a-%d-%b-%Y-%X", gmtime());
