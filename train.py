@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 import torch.optim as optim
+import torch.multiprocessing as mp
 
 import itertools, pdb, random, pickle, os
 import numpy as np
